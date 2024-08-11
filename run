@@ -7,17 +7,18 @@ benchdir="$HOME/src/fk-bench"
 . $benchdir/lib.sh
 
 function usage() {
-  echo "USAGE: run {selects|triggers} {valid|invalid|mixed} {range_agg|lag|exists|all}"
+  echo "USAGE: run [options] <config_file>"
+  echo "  -C             Don't run createdb"
+
   exit 1
 }
 
-config=""
-needs_createdb=false
+needs_createdb=true
 
-while getopts 'c:' opt; do
+while getopts 'C' opt; do
   case "$opt" in
-    "c")
-      config="$OPTARG"
+    "C")
+      needs_createdb=false
       ;;
     *)
       usage
@@ -26,70 +27,43 @@ while getopts 'c:' opt; do
 done
 shift "$(($OPTIND -1))"
 
-# If we didn't get a -c option,
-# pick a config file that matches the arguments.
-# This is the normal way to run this,
-# so that any benchmark we want to repeat will have an .xml file.
-# The -c option is for debugging problems by running short workflows.
+config="${1:-}"
 if [ -z "$config" ]; then
-  needs_createdb=true
-
-  procedures="${1:-}"
-  case "$procedures" in
-    selects)
-      ;;
-    triggers)
-      # okay
-      ;;
-    *)
-      usage
-      ;;
-  esac
-
-  texture="${2:-}"
-  case "$texture" in
-    valid)
-      # okay
-      ;;
-    invalid)
-      # okay
-      ;;
-    mixed)
-      #okay
-      ;;
-    *)
-      usage
-      ;;
-  esac
-
-  impl="${3:-}"
-  case "$impl" in
-    range_agg)
-      ;;
-    lag)
-      ;;
-    exists)
-      ;;
-    all)
-      # Run just all three RI SQL queries at once, without actually doing inserts and updates
-      ;;
-    *)
-      usage
-      ;;
-  esac
-
-  if [ -z "$config" ]; then
-    config="run_${impl}_${texture}_${procedures}.xml"
-  fi
+  usage
 fi
 
+# infer the impl from the beginning of the config file name:
+impl=""
+case "$config" in
+  range_agg*)
+    impl=range_agg
+    ;;
+  lag*)
+    impl=lag
+    ;;
+  exists*)
+    impl=exists
+    ;;
+  *)
+    # Might be okay if we don't need to run createdb,
+    # e.g. for quick test runs to work out bugs.
+    ;;
+esac
+
 # create a benchmark database
-use_impl "${impl:-range_agg}"
 if [ "$needs_createdb" = true ]; then
+  if [ -z "$impl" ]; then
+    echo "No impl inferred"
+    usage
+  fi
+  use_impl "${impl}"
   dropdb --force --if-exists -p $port benchbase
   createdb -p $port -T benchbase_template benchbase
   psql --no-psqlrc -p $port -c "vacuum analyze" benchbase
 fi
 cd ~/src/benchbase
-./mvnw compile exec:java -P postgres -Dexec.args="-b temporal -c $HOME/src/fk-bench/$config --create=false --load=false --execute=true --monitor-type=advanced --interval-monitor=1000"
-# TODO: copy results somewhere safe, maybe ask for a note about them. Even commit them.
+./mvnw compile exec:java -P postgres -Dexec.args="-b temporal -c $benchdir/$config --create=false --load=false --execute=true --monitor-type=advanced --interval-monitor=1000"
+# Copy the results somewhere safe:
+result_filename="$(ls -t ~/src/benchbase/results/*.config.xml | head -1)"
+result_base="$(basename $result_filename .config.xml)"
+cp "${result_filename%%config.xml}"* $benchdir/results/

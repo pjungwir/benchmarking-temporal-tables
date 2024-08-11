@@ -1,0 +1,18 @@
+#!/bin/bash
+# tail - tail the cluster's log file
+
+set -eu
+
+benchdir="$HOME/src/fk-bench"
+. $benchdir/lib.sh
+
+function usage() {
+  echo "USAGE: tail {range_agg|lag|exists}"
+  exit 1
+}
+
+impl="${1:-}"
+use_impl "$impl" || usage
+
+# tail postgres
+tail -f ~/local/var/log/postgresql-$impl.log

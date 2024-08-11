@@ -1064,12 +1064,11 @@ Results are saved to: `~/src/fk-bench/results/temporal_2024-08-10_17-37-11.*`.
 Here is exists at 1% failures:
 
 ```
-Completed Transactions:                                                                       com.oltpbenchmark.benchmarks.temporal.procedures.InsertPosition/01               [183067] ****
-**********************************                                                            com.oltpbenchmark.benchmarks.temporal.procedures.UpdatePosition/02               [367705] ****
-************************************************************************                      com.oltpbenchmark.benchmarks.temporal.procedures.UpdateEmployee/03               [385403] ****
-****************************************************************************
-com.oltpbenchmark.benchmarks.temporal.procedures.DeleteEmployee/04               [ 65266] ****
-*********
+Completed Transactions:
+com.oltpbenchmark.benchmarks.temporal.procedures.InsertPosition/01               [183067] **************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdatePosition/02               [367705] ****************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdateEmployee/03               [385403] ********************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.DeleteEmployee/04               [ 65266] *************
 
 Aborted Transactions:
 <EMPTY>
@@ -1180,6 +1179,61 @@ DeleteEmployee: decrease the range.
   Okay, instead of changing the range, slide the mean around.
   2 years and now we're at 63824 invalid. Aiming for 3k.
   Try 4. Got 47263.
-  Try 6.
+  Try 6. Got 33438. Once I hit the cliff it will change fast, so maybe a way to spread it at the same time would be helpful after all?
+  Try 8. Got 23398.
+  Try 10. Got 14127.
+  Try 11. Got 10613. 175156 successful. I guess actually I already passed 1% at 10. No, that's 10%!.
+  Try 15. Got 2440, 183868. Close enough.
+
+# 1% invalid:
+
+Okay, so I'm happy with the valid/invalid ratio. Let's run benchmarks for all 3 implementations again:
+
+## 1% invalid range_agg
+
+```
+Completed Transactions:
+com.oltpbenchmark.benchmarks.temporal.procedures.InsertPosition/01               [322462] ******************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdatePosition/02               [324035] ******************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdateEmployee/03               [328155] ********************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.DeleteEmployee/04               [185429] *********************************************
+
+Aborted Transactions:
+<EMPTY>
+
+Rejected Transactions (Server Retry):
+<EMPTY>
+
+Rejected Transactions (Retry Different):
+<EMPTY>
+
+Unexpected SQL Errors:
+com.oltpbenchmark.benchmarks.temporal.procedures.InsertPosition/01               [5874] ********************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdatePosition/02               [4752] ****************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.DeleteEmployee/04               [2385] ********************************
+```
+
+with this trace:
+
+```
+paul@tal:~/src/talks/pdxpug2024-benchmarking-temporal-foreign-keys-with-benchbase$ sudo bpftrace exec-nodes.bt 
+[sudo] password for paul: 
+Sorry, try again.
+[sudo] password for paul: 
+Attaching 9 probes...
+^C
+
+@calls: 
+[0]               906140 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[1]               372337 |@@@@@@@@@@@@@@@@@@@@@                               |
+[2, 4)             71019 |@@@@                                                |
+[4, 8)            606060 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                  |
+[8, 16)           324042 |@@@@@@@@@@@@@@@@@@                                  |
+[16, 32)               1 |                                                    |
+[32, 64)               2 |                                                    |
+[64, 128)              2 |                                                    |
+[128, 256)             2 |                                                    |
+[256, 512)             5 |                                                    |
+```
   
-  
+Results are saved to: `/home/paul/src/benchbase/results/temporal_2024-08-11_14-55-19.*`.
