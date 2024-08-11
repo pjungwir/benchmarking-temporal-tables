@@ -9,16 +9,21 @@ benchdir="$HOME/src/fk-bench"
 function usage() {
   echo "USAGE: run [options] <config_file>"
   echo "  -C             Don't run createdb"
+  echo "  -t <filename>  Trace with <filename> and ^C it when we're done"
 
   exit 1
 }
 
 needs_createdb=true
+trace_command=""
 
-while getopts 'C' opt; do
+while getopts 'Ct:' opt; do
   case "$opt" in
     "C")
       needs_createdb=false
+      ;;
+    "t")
+      trace_command="${OPTARG}"
       ;;
     *)
       usage
@@ -61,9 +66,36 @@ if [ "$needs_createdb" = true ]; then
   createdb -p $port -T benchbase_template benchbase
   psql --no-psqlrc -p $port -c "vacuum analyze" benchbase
 fi
+
+# Run a trace in the background and ^C it later.
+# This could be a bpftrace command, etc.
+# If you want more than one, just wrap them all in a script. (Does bash getopts support giving the same option many times?)
+trace_result=""
+if [ ! -z "$trace_command" ]; then
+  sudo ls >/dev/null  # prompt for a password if necessary
+  mkdir -p tmp
+  trace_result="$benchdir/tmp/trace.txt"
+  # It's too bad we need full sudo here.
+  # This should be enough (either here or before you run run):
+  # sudo capsh --caps="cap_bpf+eip cap_setpcap,cap_setuid,cap_setgid+ep" --keep=1 --user=paul --addamb=cap_bpf -- -c 'bpftrace exec-nodes.bt'
+  # (adapted from https://unix.stackexchange.com/a/303738/25948)
+  # But bpftrace seems to have an internal check for uid 0 and refuses to run.
+  sudo $trace_command > "$trace_result" 2>&1 &
+fi
+
 cd ~/src/benchbase
 ./mvnw compile exec:java -P postgres -Dexec.args="-b temporal -c $benchdir/$config --create=false --load=false --execute=true --monitor-type=advanced --interval-monitor=1000"
 # Copy the results somewhere safe:
 result_filename="$(ls -t ~/src/benchbase/results/*.config.xml | head -1)"
 result_base="$(basename $result_filename .config.xml)"
 cp "${result_filename%%config.xml}"* $benchdir/results/
+
+if [ ! -z "$trace_result" ]; then
+  # Send a ^C to child processes:
+  echo Killing children...
+  # setsid: because sudo won't forward signals within its own process group:
+  # https://stackoverflow.com/questions/48029094/sudo-ignores-sigterm-sent-from-same-script
+  setsid sudo pkill -INT -P $$
+  wait
+  cp $trace_result "${benchdir}/results/${result_base}-trace.txt"
+fi

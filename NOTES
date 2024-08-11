@@ -1237,3 +1237,10 @@ Attaching 9 probes...
 ```
   
 Results are saved to: `/home/paul/src/benchbase/results/temporal_2024-08-11_14-55-19.*`.
+
+## 1% invalid lag
+
+Let's try orchestrating everything with our `run` script: running bpftrace, shutting it down afterward, and copying all the reuslts.
+But bpftrace requires sudo. And even if I do `sudo ls` first, I won't be able to send it an -INT signal from my non-root script.
+It also should work if I give myself the CAP_BPF capability, right?
+
