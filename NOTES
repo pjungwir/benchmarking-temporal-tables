@@ -1,0 +1,1185 @@
+
+
+
+# References
+
+Benchbase: https://github.com/oltpbenchmark/oltpbench
+
+OLTP-Bench paper: http://www.vldb.org/pvldb/vol7/p277-difallah.pdf
+
+OLTPBench repo:  https://github.com/oltpbenchmark/oltpbench (especially see the wiki)
+
+My Journey Into Performance Benchmarking: https://www.youtube.com/watch?v=Z1JjZt1reJw
+
+How to benchmark performance of Citus and Postgres with HammerDB on Azure by Jelte Fennema-Nio: https://www.citusdata.com/blog/2022/03/12/how-to-benchmark-performance-of-citus-and-postgres-with-hammerdb/
+
+
+Slides: Intro to benchmarking with pgbench at PGConf NYC 2023 by Melanie Plageman: https://speakerdeck.com/melanieplageman/intro-to-benchmarking-with-pgbench
+
+Podcast: Path To Citus Con Ep01: Working in public on open source with Simon Willison & Marco Slot: https://talkingpostgres.com/episodes/working-in-public-on-open-source
+
+Melanie Plageman, Visualizing Postgres I/O Performance for Development, PGCon 2023
+https://www.youtube.com/watch?v=CxyPZHG5beI
+Why to run initdb between each benchmark: 15:00.
+
+
+```
+paul@tal:~/src/benchbase$ ./mvnw exec:java -P postgres -Dexec.args="--help"
+[INFO] Scanning for projects...
+[WARNING] 
+[WARNING] Some problems were encountered while building the effective model for com.oltpbenchmark:benchbase:jar:2023-SNAPSHOT
+[WARNING] 'dependencies.dependency.(groupId:artifactId:type:classifier)' must be unique: org.immutables:value:jar -> duplicate declaration of version 2.10.1 @ line 352, column 21
+[WARNING] 
+[WARNING] It is highly recommended to fix these problems because they threaten the stability of your build.
+[WARNING] 
+[WARNING] For this reason, future Maven versions might no longer support building such malformed projects.
+[WARNING] 
+[INFO] 
+[INFO] --------------------< com.oltpbenchmark:benchbase >---------------------
+[INFO] Building BenchBase 2023-SNAPSHOT
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- exec-maven-plugin:3.3.0:java (default-cli) @ benchbase ---
+usage: benchbase
+    --anonymize <arg>           Anonymize specified datasets using
+                                differential privacy
+ -b,--bench <arg>               [required] Benchmark class. Currently
+                                supported: [tpcc, tpch, tatp, wikipedia,
+                                resourcestresser, twitter, epinions, ycsb,
+                                seats, auctionmark, chbenchmark, voter,
+                                sibench, noop, smallbank, hyadapt,
+                                otmetrics, temporal, templated]
+ -c,--config <arg>              [required] Workload configuration file
+    --clear <arg>               Clear all records in the database for this
+                                benchmark
+    --create <arg>              Initialize the database for this benchmark
+ -d,--directory <arg>           Base directory for the result files,
+                                default is current directory
+    --dialects-export <arg>     Export benchmark SQL to a dialects file
+    --execute <arg>             Execute the benchmark workload
+ -h,--help                      Print this help
+ -im,--interval-monitor <arg>   Monitoring Interval in milliseconds
+ -jh,--json-histograms <arg>    Export histograms to JSON file
+    --load <arg>                Load data using the benchmark's data
+                                loader
+ -mt,--monitor-type <arg>       Type of Monitoring (throughput/advanced)
+ -s,--sample <arg>              Sampling window
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  0.406 s
+[INFO] Finished at: 2024-08-01T13:55:59-07:00
+[INFO] ------------------------------------------------------------------------
+```
+
+--json-histograms why not
+
+
+To collect metrics as you go:
+
+--monitor-type=advanced (defaults to throughput) requires pg_stat_statements to be installed
+--interval-monitor=1000 (in milliseconds) (defaults to 0 i.e. no monitoring) Seems to only matter for `advanced`.
+
+Prints txn/sec to stdout.
+Creates results/monitor but it only puts stuff there for `advanced`.
+
+
+fixed seed
+
+
+What you name the SQLStmt variables is treated as the QueryId in the monitor result CSVs, so distinguishing them can help!
+
+
+
+collecting system metrics at the same time:
+
+> We monitor the resource utilization on the server side using our
+own extended version of the DSTAT libraries2. This light-weight
+server monitoring component captures statistics from the OS (i.e.,
+CPU, RAM, and I/O activity) and from the DBMS itself whenever
+possible (i.e., resource consumption) with minimal impact on per-
+formance. At the end of the experiment, these statistics are sent to
+the Trace Analyzer and are automatically aligned with the data col-
+lected by the clients based on timestamps. The resource monitoring
+is specific to the operating system and the DBMS (since no generic
+API is available for this task).
+
+But I can't find any trace of a "Trace Analyzer" in the current git repo or the old oltpbench repo.
+You need to just do this yourself with sar or similar and line up the timestamps.
+
+dstat -tcdr
+
+This has more convenient output than sar for parsing
+
+
+Setting up our postgres installations:
+
+```
+./configure --prefix=${HOME}/local/bench-range_agg CFLAGS='-O2 -pipe' && make clean && make -j COPT='-DINSTRUMENT_FKS' world && make install-world
+./configure --prefix=${HOME}/local/bench-lag       CFLAGS='-O2 -pipe' && make clean && make -j COPT='-DINSTRUMENT_FKS -DRI_TEMPORAL_IMPL_LAG' world && make install-world
+./configure --prefix=${HOME}/local/bench-exists    CFLAGS='-O2 -pipe' && make clean && make -j COPT='-DINSTRUMENT_FKS -DRI_TEMPORAL_IMPL_EXISTS' world && make install-world
+```
+
+## ports
+range_agg 5460
+lag       5461
+exists    5462
+
+
+
+TODO: chooseEmployee should be gaussian
+TODO: choosing a time should be zipfian for the operations?
+TODO: make loading be deterministic based on a given seed!!! We want to get the same rows in each database. Is this even possible when running multiple threads? Probably not.
+
+
+Here are the actual queries.
+I collected these by running gdb against each installation, compiled with debug symbols (so not the installations I benchmarked against).
+I put a breakpoint on `ri_PlanCheck`, then I ran `printf "%s\n", querystr`. For example:
+
+```
+./configure 'CFLAGS=-ggdb -Og -g3 -fno-omit-frame-pointer' --enable-tap-tests --enable-cassert --enable-debug --prefix=${HOME}/local
+make clean && make -j COPT='-Werror -DRI_TEMPORAL_IMPL_LAG' world && make install-world
+${HOME}/local/bin/pg_ctl -D ${HOME}/local/pgsql/data -l ${HOME}/local/var/log/postgresql.log restart
+```
+
+Then I ran these queries:
+
+```
+[v18devel:5432][2436598] benchbase=# -- updating the FK:
+[v18devel:5432][2436598] benchbase=# update positions for portion of valid_at from '2020-10-10' to '2020-12-12' set name = concat(name, '+') where id = 500;
+UPDATE 3
+[v18devel:5432][2436598] benchbase=# -- updating the PK:
+[v18devel:5432][2436598] benchbase=# update employees for portion of valid_at from '2020-10-10' to '2020-12-12' set name = concat(name, '+') where id = 500;
+UPDATE 3
+```
+
+And I got these results:
+
+for `range_agg`:
+
+updating the FK:
+
+```
+SELECT 1 FROM (SELECT "valid_at" AS r FROM ONLY "public"."employees" x WHERE "id" OPERATOR(pg_catalog.=) $1 AND "valid_at"::pg_catalog.anyrange OPERATOR(pg_catalog.&&) $2::pg_catalog.anyrange FOR KEY SHARE OF x) x1 HAVING   $2::pg_catalog.anyrange OPERATOR(pg_catalog.<@) pg_catalog.range_agg(x1.r)
+```
+
+updating the PK:
+
+```
+SELECT 1 FROM (SELECT "valid_at" AS r FROM ONLY "public"."employees" x WHERE "id" OPERATOR(pg_catalog.=) $1 AND "valid_at"::pg_catalog.anyrange OPERATOR(pg_catalog.&&) $2::pg_catalog.anyrange FOR KEY SHARE OF x) x1 HAVING   $2::pg_catalog.anyrange OPERATOR(pg_catalog.<@) pg_catalog.range_agg(x1.r)
+```
+
+Note it's the same thing! The queries on both sides match for all implementations, so I'll just give the ones for an FK insert/update.
+
+for `lag`:
+
+```
+SELECT 1 FROM (   SELECT uk.uk_start_value, uk.uk_end_value,          NULLIF(LAG(uk.uk_end_value) OVER (ORDER BY uk.uk_start_value), uk.uk_start_value) AS x   FROM   (     SELECT  COALESCE(LOWER(x."valid_at"), '-Infinity') AS uk_start_value,             COALESCE(UPPER(x."valid_at"), 'Infinity') AS uk_end_value     FROM    ONLY "public"."employees" AS x WHERE "id" OPERATOR(pg_catalog.=) $1 AND "valid_at"::pg_catalog.anyrange OPERATOR(pg_catalog.&&) $2::pg_catalog.anyrange FOR KEY SHARE OF x  ) AS uk ) AS uk WHERE uk.uk_start_value < COALESCE(UPPER($2), 'Infinity') AND   uk.uk_end_value >= COALESCE(LOWER($2), '-Infinity') HAVING MIN(uk.uk_start_value) <= COALESCE(LOWER($2), '-Infinity') AND    MAX(uk.uk_end_value) >= COALESCE(UPPER($2), 'Infinity') AND    array_agg(uk.x) FILTER (WHERE uk.x IS NOT NULL) IS NULL
+```
+
+for `exists`:
+
+```
+SELECT 1 WHERE EXISTS (   SELECT  1   FROM ONLY "public"."employees" x    WHERE "id" OPERATOR(pg_catalog.=) $1 AND "valid_at"::pg_catalog.anyrange OPERATOR(pg_catalog.&&) $2::pg_catalog.anyrange   AND COALESCE(LOWER("valid_at"), '-Infinity')    <= COALESCE(LOWER($2), '-Infinity')   AND COALESCE(LOWER($2), '-Infinity')    <  COALESCE(UPPER("valid_at"), ' Infinity')   FOR KEY SHARE OF x) AND EXISTS (   SELECT  1   FROM ONLY "public"."employees" x    WHERE "id" OPERATOR(pg_catalog.=) $1 AND "valid_at"::pg_catalog.anyrange OPERATOR(pg_catalog.&&) $2::pg_catalog.anyrange   AND COALESCE(LOWER("valid_at"), '-Infinity')    <  COALESCE(UPPER($2), ' Infinity')   AND COALESCE(UPPER($2), ' Infinity')    <= COALESCE(UPPER("valid_at"), ' Infinity')   FOR KEY SHARE OF x ) AND NOT EXISTS (   SELECT  1   FROM ONLY "public"."employees" AS pk1    WHERE "id" OPERATOR(pg_catalog.=) $1 AND "valid_at"::pg_catalog.anyrange OPERATOR(pg_catalog.&&) $2::pg_catalog.anyrange   AND COALESCE(LOWER($2), '-Infinity')    <  COALESCE(UPPER("valid_at"), ' Infinity')   AND COALESCE(UPPER("valid_at"), ' Infinity')    <  COALESCE(UPPER($2), ' Infinity')   AND NOT EXISTS (     SELECT  1     FROM ONLY "public"."employees" AS pk2      WHERE pk1."id" OPERATOR(pg_catalog.=) pk2."id"     AND COALESCE(LOWER(pk2."valid_at"), '-Infinity')      <= COALESCE(UPPER(pk1."valid_at"), ' Infinity')     AND COALESCE(UPPER(pk1."valid_at"), ' Infinity')      <  COALESCE(UPPER(pk2."valid_at"), ' Infinity')     FOR KEY SHARE OF pk2  )   FOR KEY SHARE OF pk1) 
+```
+
+So what are the plans of these queries?
+
+First run `load` for each implementation.
+Then get their plans.
+I had to add a few casts to `daterange` to make Postgres accept these queries from psql,
+but otherwise they match the SQL I observed above:
+
+`range_agg`:
+
+```
+[v18devel:5460][2450574] benchbase=# explain analyze SELECT 1 FROM (SELECT "valid_at" AS r FROM ONLY "public"."employees" x WHERE "id" OPERATOR(pg_catalog.=) 500 AND "valid_at"::pg_catalog.anyrange OPERATOR(pg_catalog.&&) '[2020-10-10,2020-12-12)'::pg_catalog.daterange FOR KEY SHARE OF x) x1 HAVING   '[2020-10-10,2020-12-12)'::pg_catalog.daterange OPERATOR(pg_catalog.<@) pg_catalog.range_agg(x1.r);
+                                                                  QUERY PLAN                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=8.46..8.47 rows=1 width=4) (actual time=0.354..0.355 rows=1 loops=1)
+   Filter: ('[2020-10-10,2020-12-12)'::daterange <@ range_agg(x1.r))
+   ->  Subquery Scan on x1  (cost=0.42..8.46 rows=1 width=10) (actual time=0.347..0.349 rows=1 loops=1)
+         ->  LockRows  (cost=0.42..8.45 rows=1 width=16) (actual time=0.347..0.348 rows=1 loops=1)
+               ->  Index Scan using employees_pkey on employees x  (cost=0.42..8.44 rows=1 width=16) (actual time=0.322..0.322 rows=1 loops=1)
+                     Index Cond: ((id = 500) AND (valid_at && '[2020-10-10,2020-12-12)'::daterange))
+ Planning Time: 0.304 ms
+ Execution Time: 0.414 ms
+(8 rows)
+```
+
+`lag`:
+
+```
+[v18devel:5461][2450877] benchbase=# explain analyze SELECT 1 FROM (   SELECT uk.uk_start_value, uk.uk_end_value,          NULLIF(LAG(uk.uk_end_value) OVER (ORDER BY uk.uk_start_value), uk.uk_start_value) AS x   FROM   (     SELECT  COALESCE(LOWER(x."valid_at"), '-Infinity') AS uk_start_value,             COALESCE(UPPER(x."valid_at"), 'Infinity') AS uk_end_value     FROM    ONLY "public"."employees" AS x WHERE "id" OPERATOR(pg_catalog.=) 500 AND "valid_at"::pg_catalog.anyrange OPERATOR(pg_catalog.&&) '[2020-10-10,2020-12-12)'::pg_catalog.daterange FOR KEY SHARE OF x  ) AS uk ) AS uk WHERE uk.uk_start_value < COALESCE(UPPER('[2020-10-10,2020-12-12)'::daterange), 'Infinity') AND   uk.uk_end_value >= COALESCE(LOWER('[2020-10-10,2020-12-12)'::daterange), '-Infinity') HAVING MIN(uk.uk_start_value) <= COALESCE(LOWER('[2020-10-10,2020-12-12)'::daterange), '-Infinity') AND    MAX(uk.uk_end_value) >= COALESCE(UPPER('[2020-10-10,2020-12-12)'::daterange), 'Infinity') AND    array_agg(uk.x) FILTER (WHERE uk.x IS NOT NULL) IS NULL
+
+;
+                                                                                 QUERY PLAN                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=8.52..8.54 rows=1 width=4) (actual time=0.123..0.124 rows=1 loops=1)
+   Filter: ((array_agg(uk.x) FILTER (WHERE (uk.x IS NOT NULL)) IS NULL) AND (min(uk.uk_start_value) <= '2020-10-10'::date) AND (max(uk.uk_end_value) >= '2020-12-12'::date))
+   ->  Subquery Scan on uk  (cost=8.47..8.51 rows=1 width=12) (actual time=0.104..0.119 rows=1 loops=1)
+         Filter: ((uk.uk_start_value < '2020-12-12'::date) AND (uk.uk_end_value >= '2020-10-10'::date))
+         ->  WindowAgg  (cost=8.47..8.49 rows=1 width=12) (actual time=0.103..0.117 rows=1 loops=1)
+               ->  Sort  (cost=8.47..8.48 rows=1 width=8) (actual time=0.082..0.083 rows=1 loops=1)
+                     Sort Key: uk_1.uk_start_value
+                     Sort Method: quicksort  Memory: 25kB
+                     ->  Subquery Scan on uk_1  (cost=0.42..8.46 rows=1 width=8) (actual time=0.076..0.078 rows=1 loops=1)
+                           ->  LockRows  (cost=0.42..8.45 rows=1 width=14) (actual time=0.076..0.077 rows=1 loops=1)
+                                 ->  Index Scan using employees_pkey on employees x  (cost=0.42..8.44 rows=1 width=14) (actual time=0.059..0.059 rows=1 loops=1)
+                                       Index Cond: ((id = 500) AND (valid_at && '[2020-10-10,2020-12-12)'::daterange))
+ Planning Time: 0.190 ms
+ Execution Time: 0.182 ms
+(14 rows)
+```
+
+So in the inner-most nodes we do the same index scan to find the relevant rows.
+But we need a sorting step and the `WindowAgg` node.
+Then at the top level we again have an `Aggregate` (albeit with a more complicated filter).
+
+`exists`:
+
+```
+[v18devel:5462][1249412] benchbase=# explain analyze SELECT 1 WHERE EXISTS (   SELECT  1   FROM ONLY "public"."employees" x    WHERE "id" OPERATOR(pg_catalog.=) 500 AND "valid_at"::pg_catalog.anyrange OPERATOR(pg_catalog.&&) '[2020-10-10,2020-12-12)'::pg_catalog.daterange   AND COALESCE(LOWER("valid_at"), '-Infinity')    <= COALESCE(LOWER('[2020-10-10,2020-12-12)'::daterange), '-Infinity')   AND COALESCE(LOWER('[2020-10-10,2020-12-12)'::daterange), '-Infinity')    <  COALESCE(UPPER("valid_at"), ' Infinity')   FOR KEY SHARE OF x) AND EXISTS (   SELECT  1   FROM ONLY "public"."employees" x    WHERE "id" OPERATOR(pg_catalog.=) 500 AND "valid_at"::pg_catalog.anyrange OPERATOR(pg_catalog.&&) '[2020-10-10,2020-12-12)'::pg_catalog.daterange   AND COALESCE(LOWER("valid_at"), '-Infinity')    <  COALESCE(UPPER('[2020-10-10,2020-12-12)'::daterange), ' Infinity')   AND COALESCE(UPPER('[2020-10-10,2020-12-12)'::daterange), ' Infinity')    <= COALESCE(UPPER("valid_at"), ' Infinity')   FOR KEY SHARE OF x ) AND NOT EXISTS (   SELECT  1   FROM ONLY "public"."employees" AS pk1    WHERE "id" OPERATOR(pg_catalog.=) 500 AND "valid_at"::pg_catalog.anyrange OPERATOR(pg_catalog.&&) '[2020-10-10,2020-12-12)'::pg_catalog.daterange   AND COALESCE(LOWER('[2020-10-10,2020-12-12)'::daterange), '-Infinity')    <  COALESCE(UPPER("valid_at"), ' Infinity')   AND COALESCE(UPPER("valid_at"), ' Infinity')    <  COALESCE(UPPER('[2020-10-10,2020-12-12)'::daterange), ' Infinity')   AND NOT EXISTS (     SELECT  1     FROM ONLY "public"."employees" AS pk2      WHERE pk1."id" OPERATOR(pg_catalog.=) pk2."id"     AND COALESCE(LOWER(pk2."valid_at"), '-Infinity')      <= COALESCE(UPPER(pk1."valid_at"), ' Infinity')     AND COALESCE(UPPER(pk1."valid_at"), ' Infinity')      <  COALESCE(UPPER(pk2."valid_at"), ' Infinity')     FOR KEY SHARE OF pk2  )   FOR KEY SHARE OF pk1)
+;
+                                                                                                                  QUERY PLAN
+id-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Result  (cost=33.83..33.84 rows=1 width=4) (actual time=0.106..0.107 rows=1 loops=1)
+   One-Time Filter: ((InitPlan 1).col1 AND (InitPlan 2).col1 AND (NOT (InitPlan 4).col1))
+   InitPlan 1
+     ->  LockRows  (cost=0.42..8.46 rows=1 width=10) (actual time=0.051..0.051 rows=1 loops=1)
+           ->  Index Scan using employees_pkey on employees x  (cost=0.42..8.45 rows=1 width=10) (actual time=0.043..0.043 rows=1 loops=1)
+                 Index Cond: ((id = 500) AND (valid_at && '[2020-10-10,2020-12-12)'::daterange))
+                 Filter: ((COALESCE(lower(valid_at), '-infinity'::date) <= '2020-10-10'::date) AND ('2020-10-10'::date < COALESCE(upper(valid_at), 'infinity'::date)))
+   InitPlan 2
+     ->  LockRows  (cost=0.42..8.46 rows=1 width=10) (actual time=0.028..0.028 rows=1 loops=1)
+           ->  Index Scan using employees_pkey on employees x_1  (cost=0.42..8.45 rows=1 width=10) (actual time=0.027..0.027 rows=1 loops=1)
+                 Index Cond: ((id = 500) AND (valid_at && '[2020-10-10,2020-12-12)'::daterange))
+                 Filter: ((COALESCE(lower(valid_at), '-infinity'::date) < '2020-12-12'::date) AND ('2020-12-12'::date <= COALESCE(upper(valid_at), 'infinity'::date)))
+   InitPlan 4
+     ->  LockRows  (cost=0.42..16.92 rows=1 width=10) (actual time=0.026..0.026 rows=0 loops=1)
+           ->  Index Scan using employees_pkey on employees pk1  (cost=0.42..16.91 rows=1 width=10) (actual time=0.026..0.026 rows=0 loops=1)
+                 Index Cond: ((id = 500) AND (valid_at && '[2020-10-10,2020-12-12)'::daterange))
+                 Filter: (('2020-10-10'::date < COALESCE(upper(valid_at), 'infinity'::date)) AND (COALESCE(upper(valid_at), 'infinity'::date) < '2020-12-12'::date) AND (NOT EXISTS(SubPlan 3)))
+                 Rows Removed by Filter: 1
+                 SubPlan 3
+                   ->  LockRows  (cost=0.42..8.46 rows=1 width=10) (never executed)
+                         ->  Index Scan using employees_pkey on employees pk2  (cost=0.42..8.45 rows=1 width=10) (never executed)
+                               Index Cond: (id = pk1.id)
+                               Filter: ((COALESCE(lower(valid_at), '-infinity'::date) <= COALESCE(upper(pk1.valid_at), 'infinity'::date)) AND (COALESCE(upper(pk1.valid_at), 'infinity'::date) < COALESCE(upper(valid_at), 'infinity'::date)))
+ Planning Time: 0.150 ms
+ Execution Time: 0.134 ms
+(25 rows)
+```
+
+Here we have a much more complicated plan. We have three subplans connected by `AND`s.
+We may not have to execute them all.
+For employee 500, we had the run the first subplan, the second subplan, and half of the third subplan (with one `(never executed)`).
+As before, we are able to use `employees_pkey` to find only the relevant rows (but here we need to do it three times, each time filtering out heap tuples by slightly different conditions).
+
+So my hypothesis is that `range_agg` will row a little bit faster than `lag`.
+They should read the same number of rows, but `range_agg` will use a little less CPU.
+It might even be too little measure easily.
+
+I expect `exists` will perform worse than either of the other two. It will use more CPU and read more rows.
+
+
+...
+
+I also tried running this:
+
+```
+sudo funclatency-bpfcc -r /home/paul/local/bench-range_agg/bin/postgres:RI_FKey_check
+```
+
+then saying this:
+
+```
+./run range_agg
+```
+
+That runs the real FK operations with the range_agg implementation. I got this result:
+
+```
+In file included from <built-in>:2:
+In file included from /virtual/include/bcc/bpf.h:12:
+In file included from include/linux/types.h:6:
+In file included from include/uapi/linux/types.h:14:
+In file included from include/uapi/linux/posix_types.h:5:
+In file included from include/linux/stddef.h:5:
+In file included from include/uapi/linux/stddef.h:5:
+In file included from include/linux/compiler_types.h:122:
+include/linux/compiler-clang.h:50:9: warning: '__HAVE_BUILTIN_BSWAP32__' macro redefined [-Wmacro-redefined]
+#define __HAVE_BUILTIN_BSWAP32__
+        ^
+<command line>:4:9: note: previous definition is here
+#define __HAVE_BUILTIN_BSWAP32__ 1
+        ^
+In file included from <built-in>:2:
+In file included from /virtual/include/bcc/bpf.h:12:
+In file included from include/linux/types.h:6:
+In file included from include/uapi/linux/types.h:14:
+In file included from include/uapi/linux/posix_types.h:5:
+In file included from include/linux/stddef.h:5:
+In file included from include/uapi/linux/stddef.h:5:
+In file included from include/linux/compiler_types.h:122:
+include/linux/compiler-clang.h:51:9: warning: '__HAVE_BUILTIN_BSWAP64__' macro redefined [-Wmacro-redefined]
+#define __HAVE_BUILTIN_BSWAP64__
+        ^
+<command line>:5:9: note: previous definition is here
+#define __HAVE_BUILTIN_BSWAP64__ 1
+        ^
+In file included from <built-in>:2:
+In file included from /virtual/include/bcc/bpf.h:12:
+In file included from include/linux/types.h:6:
+In file included from include/uapi/linux/types.h:14:
+In file included from include/uapi/linux/posix_types.h:5:
+In file included from include/linux/stddef.h:5:
+In file included from include/uapi/linux/stddef.h:5:
+In file included from include/linux/compiler_types.h:122:
+include/linux/compiler-clang.h:52:9: warning: '__HAVE_BUILTIN_BSWAP16__' macro redefined [-Wmacro-redefined]
+#define __HAVE_BUILTIN_BSWAP16__
+        ^
+<command line>:3:9: note: previous definition is here
+#define __HAVE_BUILTIN_BSWAP16__ 1
+        ^
+3 warnings generated.
+Tracing 4 functions for "/home/paul/local/bench-range_agg/bin/postgres:RI_FKey_check"... Hit Ctrl-C to end.
+^C
+
+Function = b'[unknown]' [552514]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 150      |                                        |
+     32768 -> 65535      : 17344    |****************************************|
+     65536 -> 131071     : 12393    |****************************            |
+    131072 -> 262143     : 62       |                                        |
+    262144 -> 524287     : 3        |                                        |
+
+Function = b'[unknown]' [552515]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 155      |                                        |
+     32768 -> 65535      : 16859    |****************************************|
+     65536 -> 131071     : 12852    |******************************          |
+    131072 -> 262143     : 103      |                                        |
+    262144 -> 524287     : 2        |                                        |
+    524288 -> 1048575    : 1        |                                        |
+
+Function = b'[unknown]' [552513]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 131      |                                        |
+     32768 -> 65535      : 17429    |****************************************|
+     65536 -> 131071     : 12568    |****************************            |
+    131072 -> 262143     : 88       |                                        |
+    262144 -> 524287     : 3        |                                        |
+
+Function = b'[unknown]' [552517]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 134      |                                        |
+     32768 -> 65535      : 16705    |****************************************|
+     65536 -> 131071     : 13019    |*******************************         |
+    131072 -> 262143     : 95       |                                        |
+    262144 -> 524287     : 3        |                                        |
+    524288 -> 1048575    : 1        |                                        |
+
+Function = b'[unknown]' [552516]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 142      |                                        |
+     32768 -> 65535      : 16974    |****************************************|
+     65536 -> 131071     : 12735    |******************************          |
+    131072 -> 262143     : 86       |                                        |
+    262144 -> 524287     : 2        |                                        |
+    524288 -> 1048575    : 3        |                                        |
+
+Function = b'[unknown]' [552521]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 152      |                                        |
+     32768 -> 65535      : 17730    |****************************************|
+     65536 -> 131071     : 11798    |**************************              |
+    131072 -> 262143     : 83       |                                        |
+    262144 -> 524287     : 7        |                                        |
+
+Function = b'[unknown]' [552523]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+      128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 133      |                                        |
+     32768 -> 65535      : 16922    |****************************************|
+     65536 -> 131071     : 12704    |******************************          |
+    131072 -> 262143     : 79       |                                        |
+    262144 -> 524287     : 0        |                                        |
+    524288 -> 1048575    : 1        |                                        |
+
+Function = b'[unknown]' [552519]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 176      |                                        |
+     32768 -> 65535      : 17159    |****************************************|
+     65536 -> 131071     : 12481    |*****************************           |
+    131072 -> 262143     : 78       |                                        |
+    262144 -> 524287     : 0        |                                        |
+    524288 -> 1048575    : 2        |                                        |
+   1048576 -> 2097151    : 2        |                                        |
+
+Function = b'[unknown]' [552522]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 150      |                                        |
+     32768 -> 65535      : 17158    |****************************************|
+     65536 -> 131071     : 12597    |*****************************           |
+    131072 -> 262143     : 88       |                                        |
+    262144 -> 524287     : 5        |                                        |
+    524288 -> 1048575    : 1        |                                        |
+
+Function = b'[unknown]' [552520]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 155      |                                        |
+     32768 -> 65535      : 16945    |****************************************|
+     65536 -> 131071     : 12720    |******************************          |
+    131072 -> 262143     : 89       |                                        |
+    262144 -> 524287     : 2        |                                        |
+    524288 -> 1048575    : 2        |                                        |
+
+avg = 64155 nsecs, total: 19212061616 nsecs, count: 299461
+```
+
+I'm not sure what those warnings are about or why it thought I had four functions named `RI_FKey_check`.
+(Oh, because `-r` means a regular expression, so it matched `RI_FKey_check_ins` etc too.)
+I think the numbers like `552520` are pids.
+
+Now I guess I should run it against the other implementations too.
+This is going to be hard to compare though. I wish I could get the raw data instead so I could graph it.
+
+This is without the `-r` flag:
+
+```
+paul@tal:~/src/talks/pdxpug2024-benchmarking-temporal-foreign-keys-with-benchbase$ sudo funclatency-bpfcc -v /home/paul/local/bench-range_agg/bin/postgres:RI_FKey_check
+[sudo] password for paul:
+
+#include <uapi/linux/ptrace.h>
+
+typedef struct ip_pid {
+    u64 ip;
+    u64 pid;
+} ip_pid_t;
+
+typedef struct hist_key {
+    ip_pid_t key;
+    u64 slot;
+} hist_key_t;
+
+BPF_HASH(start, u32);
+BPF_ARRAY(avg, u64, 2);
+BPF_HASH(ipaddr, u32);
+BPF_HISTOGRAM(dist, hist_key_t);
+
+int trace_func_entry(struct pt_regs *ctx)
+{
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    u32 pid = pid_tgid;
+    u32 tgid = pid_tgid >> 32;
+    u64 ts = bpf_ktime_get_ns();
+
+
+    u64 ip = PT_REGS_IP(ctx); ipaddr.update(&pid, &ip);
+    start.update(&pid, &ts);
+
+    return 0;
+}
+
+int trace_func_return(struct pt_regs *ctx)
+{
+    u64 *tsp, delta;
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    u32 pid = pid_tgid;
+    u32 tgid = pid_tgid >> 32;
+
+    // calculate delta time
+    tsp = start.lookup(&pid);
+    if (tsp == 0) {
+        return 0;   // missed start
+    }
+    delta = bpf_ktime_get_ns() - *tsp;
+    start.delete(&pid);
+
+    u32 lat = 0;
+    u32 cnt = 1;
+    u64 *sum = avg.lookup(&lat);
+    if (sum) lock_xadd(sum, delta);
+    u64 *cnts = avg.lookup(&cnt);
+    if (cnts) lock_xadd(cnts, 1);
+
+
+
+    // store as histogram
+
+    u64 ip, *ipp = ipaddr.lookup(&pid);
+    if (ipp) {
+        ip = *ipp;
+        hist_key_t key;
+        key.key.ip = ip;
+        key.key.pid = tgid;
+        key.slot = bpf_log2l(delta);
+        dist.increment(key);
+        ipaddr.delete(&pid);
+    }
+
+
+    return 0;
+}
+
+In file included from <built-in>:2:
+In file included from /virtual/include/bcc/bpf.h:12:
+In file included from include/linux/types.h:6:
+In file included from include/uapi/linux/types.h:14:
+In file included from include/uapi/linux/posix_types.h:5:
+In file included from include/linux/stddef.h:5:
+In file included from include/uapi/linux/stddef.h:5:
+In file included from include/linux/compiler_types.h:122:
+include/linux/compiler-clang.h:50:9: warning: '__HAVE_BUILTIN_BSWAP32__' macro redefined [-Wmacro-redefined]
+#define __HAVE_BUILTIN_BSWAP32__
+        ^
+<command line>:4:9: note: previous definition is here
+#define __HAVE_BUILTIN_BSWAP32__ 1
+        ^
+In file included from <built-in>:2:
+In file included from /virtual/include/bcc/bpf.h:12:
+In file included from include/linux/types.h:6:
+In file included from include/uapi/linux/types.h:14:
+In file included from include/uapi/linux/posix_types.h:5:
+In file included from include/linux/stddef.h:5:
+In file included from include/uapi/linux/stddef.h:5:
+In file included from include/linux/compiler_types.h:122:
+include/linux/compiler-clang.h:51:9: warning: '__HAVE_BUILTIN_BSWAP64__' macro redefined [-Wmacro-redefined]
+#define __HAVE_BUILTIN_BSWAP64__
+        ^
+<command line>:5:9: note: previous definition is here
+#define __HAVE_BUILTIN_BSWAP64__ 1
+        ^
+In file included from <built-in>:2:
+In file included from /virtual/include/bcc/bpf.h:12:
+In file included from include/linux/types.h:6:
+In file included from include/uapi/linux/types.h:14:
+In file included from include/uapi/linux/posix_types.h:5:
+In file included from include/linux/stddef.h:5:
+In file included from include/uapi/linux/stddef.h:5:
+In file included from include/linux/compiler_types.h:122:
+include/linux/compiler-clang.h:52:9: warning: '__HAVE_BUILTIN_BSWAP16__' macro redefined [-Wmacro-redefined]
+#define __HAVE_BUILTIN_BSWAP16__
+        ^
+<command line>:3:9: note: previous definition is here
+#define __HAVE_BUILTIN_BSWAP16__ 1
+        ^
+3 warnings generated.
+Tracing 1 functions for "/home/paul/local/bench-range_agg/bin/postgres:RI_FKey_check"... Hit Ctrl-C to end.
+^C
+
+Function = b'[unknown]' [567095]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 106      |                                        |
+     32768 -> 65535      : 16324    |****************************************|
+     65536 -> 131071     : 13576    |*********************************       |
+    131072 -> 262143     : 119      |                                        |
+    262144 -> 524287     : 5        |                                        |
+
+Function = b'[unknown]' [567096]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 117      |                                        |
+     32768 -> 65535      : 16418    |****************************************|
+     65536 -> 131071     : 13281    |********************************        |
+    131072 -> 262143     : 108      |                                        |
+    262144 -> 524287     : 2        |                                        |
+
+Function = b'[unknown]' [567100]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 92       |                                        |
+     32768 -> 65535      : 15619    |****************************************|
+     65536 -> 131071     : 14173    |************************************    |
+    131072 -> 262143     : 135      |                                        |
+    262144 -> 524287     : 1        |                                        |
+    524288 -> 1048575    : 1        |                                        |
+
+Function = b'[unknown]' [567103]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 109      |                                        |
+     32768 -> 65535      : 15674    |****************************************|
+     65536 -> 131071     : 14180    |************************************    |
+    131072 -> 262143     : 127      |                                        |
+    262144 -> 524287     : 2        |                                        |
+
+Function = b'[unknown]' [567094]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 104      |                                        |
+     32768 -> 65535      : 15704    |****************************************|
+     65536 -> 131071     : 13964    |***********************************     |
+    131072 -> 262143     : 105      |                                        |
+    262144 -> 524287     : 4        |                                        |
+    524288 -> 1048575    : 1        |                                        |
+
+Function = b'[unknown]' [567098]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 113      |                                        |
+     32768 -> 65535      : 15826    |****************************************|
+     65536 -> 131071     : 13929    |***********************************     |
+    131072 -> 262143     : 97       |                                        |
+    262144 -> 524287     : 1        |                                        |
+    524288 -> 1048575    : 1        |                                        |
+
+Function = b'[unknown]' [567101]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 117      |                                        |
+     32768 -> 65535      : 16471    |****************************************|
+     65536 -> 131071     : 13213    |********************************        |
+    131072 -> 262143     : 103      |                                        |
+    262144 -> 524287     : 1        |                                        |
+
+Function = b'[unknown]' [567102]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 91       |                                        |
+     32768 -> 65535      : 15710    |****************************************|
+     65536 -> 131071     : 14069    |***********************************     |
+    131072 -> 262143     : 105      |                                        |
+    262144 -> 524287     : 1        |                                        |
+    524288 -> 1048575    : 2        |                                        |
+
+Function = b'[unknown]' [567099]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 94       |                                        |
+     32768 -> 65535      : 15668    |****************************************|
+     65536 -> 131071     : 13860    |***********************************     |
+    131072 -> 262143     : 102      |                                        |
+    262144 -> 524287     : 3        |                                        |
+    524288 -> 1048575    : 2        |                                        |
+
+Function = b'[unknown]' [567097]
+     nsecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+         2 -> 3          : 0        |                                        |
+         4 -> 7          : 0        |                                        |
+         8 -> 15         : 0        |                                        |
+        16 -> 31         : 0        |                                        |
+        32 -> 63         : 0        |                                        |
+        64 -> 127        : 0        |                                        |
+       128 -> 255        : 0        |                                        |
+       256 -> 511        : 0        |                                        |
+       512 -> 1023       : 0        |                                        |
+      1024 -> 2047       : 0        |                                        |
+      2048 -> 4095       : 0        |                                        |
+      4096 -> 8191       : 0        |                                        |
+      8192 -> 16383      : 0        |                                        |
+     16384 -> 32767      : 83       |                                        |
+     32768 -> 65535      : 15250    |****************************************|
+     65536 -> 131071     : 14295    |*************************************   |
+    131072 -> 262143     : 129      |                                        |
+    262144 -> 524287     : 5        |                                        |
+    524288 -> 1048575    : 3        |                                        |
+
+avg = 65881 nsecs, total: 19724533499 nsecs, count: 299395
+```
+
+# 2024-08-10
+
+Want to explore my hypothesis that EXISTS executes fewer nodes when most FKs fail.
+
+So we instrument postgres. First we'll run all three impls with normal FK distribution (only 1% failure). Then we'll run all three with 90% failure.
+
+We will `#define INSTRUMENT_FKS` so we can trace `ExecProcNode` (which normally is `static inline`):
+
+This shows that it worked:
+
+```
+paul@tal:~/src/postgresql$ nm ~/local/bench-range_agg/bin/postgres | grep ExecProcNode
+000000000030c4b0 T ExecProcNode
+0000000000312b70 t ExecProcNodeFirst
+0000000000312bb0 t ExecProcNodeInstr
+00000000003131b0 T ExecSetExecProcNode
+00000000003131d0 T MultiExecProcNode
+0000000000122969 t MultiExecProcNode.cold
+```
+
+Here is range_agg at 1% failures;
+
+```
+Completed Transactions:
+com.oltpbenchmark.benchmarks.temporal.procedures.InsertPosition/01               [176155] ****
+*********************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdatePosition/02               [352851] ****
+************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdateEmployee/03               [371108] ****
+****************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.DeleteEmployee/04               [ 62794] ****
+*********
+
+Aborted Transactions:
+<EMPTY>
+                                                                                              Rejected Transactions (Server Retry):
+<EMPTY>
+
+Rejected Transactions (Retry Different):
+<EMPTY>
+
+Unexpected SQL Errors:
+com.oltpbenchmark.benchmarks.temporal.procedures.InsertPosition/01               [194950] ****
+****************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdatePosition/02               [ 17990] ****
+***
+com.oltpbenchmark.benchmarks.temporal.procedures.DeleteEmployee/04               [148992] ****
+*********************************************************
+```
+
+with this trace:
+
+```
+paul@tal:~/src/talks/pdxpug2024-benchmarking-temporal-foreign-keys-with-benchbase$ sudo bpftrace exec-nodes.bt
+[sudo] password for paul:
+Attaching 7 probes...
+
+
+^C
+
+@calls:
+[0]               514909 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@          |
+[1]               276966 |@@@@@@@@@@@@@@@@@@@@@@                              |
+[2, 4)            630023 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[4, 8)            467505 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@              |
+[8, 16)           176834 |@@@@@@@@@@@@@@                                      |
+[16, 32)               1 |                                                    |
+[32, 64)               2 |                                                    |
+[64, 128)              2 |                                                    |
+[128, 256)             2 |                                                    |
+[256, 512)             5 |                                                    |
+```
+
+Results are saved to: `~/src/fk-bench/results/temporal_2024-08-10_17-01-07.*`.
+
+Here is lag at 1% failures:
+
+```
+Completed Transactions:
+com.oltpbenchmark.benchmarks.temporal.procedures.InsertPosition/01               [181259] ****
+*********************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdatePosition/02               [364567] ****
+************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdateEmployee/03               [382209] ****
+****************************************************************************                  com.oltpbenchmark.benchmarks.temporal.procedures.DeleteEmployee/04               [ 64648] ****
+*********
+Aborted Transactions:                                                                         <EMPTY>
+                                                                                              Rejected Transactions (Server Retry):
+<EMPTY>
+                                                                                              Rejected Transactions (Retry Different):
+<EMPTY>
+
+Unexpected SQL Errors:
+com.oltpbenchmark.benchmarks.temporal.procedures.InsertPosition/01               [200234] ****
+****************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdatePosition/02               [ 18441] ****
+***
+com.oltpbenchmark.benchmarks.temporal.procedures.DeleteEmployee/04               [153133] ****
+*********************************************************
+```
+
+with this trace:
+
+```
+paul@tal:~/src/talks/pdxpug2024-benchmarking-temporal-foreign-keys-with-benchbase$ sudo bpftrace exec-nodes.bt
+[sudo] password for paul:
+Attaching 8 probes...
+^C
+
+@calls:
+[0]               529897 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[1]               285616 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@                        |
+[2, 4)            395776 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@              |
+[4, 8)            253402 |@@@@@@@@@@@@@@@@@@@@@@@@                            |
+[8, 16)           480317 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@     |
+[16, 32)          182217 |@@@@@@@@@@@@@@@@@                                   |
+[32, 64)               2 |                                                    |
+[64, 128)              2 |                                                    |
+[128, 256)             2 |                                                    |
+[256, 512)             5 |                                                    |
+```
+
+Results are saved to: `~/src/fk-bench/results/temporal_2024-08-10_17-37-11.*`.
+
+Here is exists at 1% failures:
+
+```
+Completed Transactions:                                                                       com.oltpbenchmark.benchmarks.temporal.procedures.InsertPosition/01               [183067] ****
+**********************************                                                            com.oltpbenchmark.benchmarks.temporal.procedures.UpdatePosition/02               [367705] ****
+************************************************************************                      com.oltpbenchmark.benchmarks.temporal.procedures.UpdateEmployee/03               [385403] ****
+****************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.DeleteEmployee/04               [ 65266] ****
+*********
+
+Aborted Transactions:
+<EMPTY>
+
+Rejected Transactions (Server Retry):                                                         <EMPTY>
+                                                                                              Rejected Transactions (Retry Different):
+<EMPTY>
+Unexpected SQL Errors:                                                                        com.oltpbenchmark.benchmarks.temporal.procedures.InsertPosition/01               [202502] ****
+****************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdatePosition/02               [ 18566] ****
+***
+com.oltpbenchmark.benchmarks.temporal.procedures.DeleteEmployee/04               [155344] ****
+*********************************************************
+```
+
+with this trace:
+
+```
+paul@tal:~/src/talks/pdxpug2024-benchmarking-temporal-foreign-keys-with-benchbase$ sudo bpftrace exec-nodes.bt
+[sudo] password for paul:
+Attaching 9 probes...
+^C
+
+@calls:
+[0]               534872 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@             |
+[1]               288872 |@@@@@@@@@@@@@@@@@@@@@                               |
+[2, 4)            711005 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[4, 8)            430719 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                     |
+[8, 16)           183318 |@@@@@@@@@@@@@                                       |
+[16, 32)               1 |                                                    |
+[32, 64)               2 |                                                    |
+[64, 128)              2 |                                                    |
+[128, 256)             2 |                                                    |
+[256, 512)             5 |                                                    |
+```
+
+Results are saved to: `~/src/fk-bench/results/temporal_2024-08-10_18-06-47.*`.
+
+Actually those three are a lot more failures than I wanted. What is going on there?
+UpdatePosition looks good but not the others.
+And why isn't UpdateEmployee causing failures?
+Did I switch it back to CASCADE? I don't want to do CASCADEs because only the RESTICT/NO ACTION patch is ready for committing.
+I guess I need to re-tune things.
+
+Okay why aren't I just running the SELECT queries though?
+I could have 3 separate config files and just run one at 100%.
+maybe do a transition from nearly-always-valid to mostly-invalid.
+
+I thought I had valid/invalid dialed in, but I must have changed something that is throwing it off. I don't think loading changed. Well positions pick a gaussian employee id, but that seems okay. It means most employees will have a little more than positions/employee, and a few will have a low number of positions.
+
+Let's fix each pattern one-by-one:
+
+- insert position: high errors
+- update position: already low errors
+- update employee: no errors at all. That isn't right either
+- delete employee: high errors
+
+Actually let's start with the non-trigger test.
+All four trigger scenarios should have the same distribution as that, right?
+Yes. For those I'm not picking a position at all, just an employee.
+Oh I turned gaussian to false? That might be doing it.
+Indeed, if I make it false, I get 162938 valid and 3562 invalid, so 0.5% (and for some reason it always goes up when I increase the duration, but I don't understand why).
+
+Now I'm getting this which is a curious mix:
+
+```
+Completed Transactions:
+com.oltpbenchmark.benchmarks.temporal.procedures.InsertPosition/01               [333523] *****************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdatePosition/02               [342190] ********************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdateEmployee/03               [342170] *******************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.DeleteEmployee/04               [115369] **************************
+
+Aborted Transactions:
+<EMPTY>
+
+Rejected Transactions (Server Retry):
+<EMPTY>
+
+Rejected Transactions (Retry Different):
+<EMPTY>
+
+Unexpected SQL Errors:
+com.oltpbenchmark.benchmarks.temporal.procedures.InsertPosition/01               [ 8630] ********
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdatePosition/02               [  577] 
+com.oltpbenchmark.benchmarks.temporal.procedures.DeleteEmployee/04               [80657] ********************************************************************************
+```
+
+So Delete is very high. Is that still deleting from all time?
+InsertPosition is close enough.
+UpdatePosition is maybe too low.
+And why doesn't UpdateEmployee have any at all?
+I checked the ddl and there is no CASCADE any more.
+
+Okay one at a time. But it looks like I need to parameterize the range,
+and not just use a constant.
+Can I put custom params in the config files?
+TwitterConfiguration has something like that.
+
+Oh UpdateEmployee never changes the id or the timestamps. Okay, no big deal.
+
+UpdatePosition: increase the range.
+  from 0.03 to 0.40. still too low.
+  try 4.00, get to 1287. Still too low.
+  try 16.00,  now 5164. Good enough.
+DeleteEmployee: decrease the range.
+  from 0.03 to 0.003, still too high.
+  try 0.0003. No, that's an exception. This probably needs to be a code change.
+  Okay, instead of changing the range, slide the mean around.
+  2 years and now we're at 63824 invalid. Aiming for 3k.
+  Try 4. Got 47263.
+  Try 6.
+  
+  

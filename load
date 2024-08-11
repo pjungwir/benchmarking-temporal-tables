@@ -1,0 +1,22 @@
+#!/bin/bash
+# load - do a load for a given strategy, but don't run the benchmark yet.
+#
+# Run this after you've run wipe.
+
+set -eu
+
+benchdir="$HOME/src/fk-bench"
+. $benchdir/lib.sh
+
+impl="${1:-}"
+
+function usage() {
+  echo "USAGE: load {range_agg|lag|exists}"
+  exit 1
+}
+
+use_impl "$impl" || usage
+
+cd ~/src/benchbase
+./mvnw exec:java -P postgres -Dexec.args="-b temporal -c $benchdir/load_${impl}_config.xml --create=true --load=true --execute=false"
+psql --no-psqlrc -p $port -c "vacuum analyze" benchbase_template

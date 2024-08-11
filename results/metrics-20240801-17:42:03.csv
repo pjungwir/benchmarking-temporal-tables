@@ -1,0 +1,13 @@
+"pcp-dstat 5.3.6 CSV Output"
+"Author:","PCP team <pcp@groups.io> and Dag Wieers <dag@wieers.com>",,,,"URL:","https://pcp.io/ and http://dag.wieers.com/home-made/dstat/"
+"Host:","tal",,,,"User:","paul"
+"Cmdline:","pcp-dstat -tcdr --output metrics-20240801-17:42:03.csv",,,,"Date:","01 Aug 2024 17:42:03 PDT"
+"system","total usage",,,,,"dsk/total",,"io/total",
+"time","total usage:usr","total usage:sys","total usage:idl","total usage:wai","total usage:stl","dsk/total:read","dsk/total:writ","read","writ"
+01-08 17:42:03,,,,
+01-08 17:42:04,0.915,0.250,98.186,0.166,0,0,11.982,0,5.991
+01-08 17:42:05,1.334,0.500,97.778,0.250,0,0,124.035,0,24.007
+01-08 17:42:06,0.500,0.417,98.280,0.083,0,0,44.013,0,10.003
+01-08 17:42:07,1.583,0.417,97.556,0.583,0,0,135.962,0,24.993
+01-08 17:42:08,1.083,0.583,97.579,0.333,0,0,91.996,0,16.999
+01-08 17:42:09,1.000,0.750,97.648,0.083,0,0,51.990,0,20.996

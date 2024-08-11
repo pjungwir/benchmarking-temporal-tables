@@ -1,0 +1,95 @@
+#!/bin/bash
+# run - run a benchmark, after creating a new database from the template
+
+set -eu
+
+benchdir="$HOME/src/fk-bench"
+. $benchdir/lib.sh
+
+function usage() {
+  echo "USAGE: run {selects|triggers} {valid|invalid|mixed} {range_agg|lag|exists|all}"
+  exit 1
+}
+
+config=""
+needs_createdb=false
+
+while getopts 'c:' opt; do
+  case "$opt" in
+    "c")
+      config="$OPTARG"
+      ;;
+    *)
+      usage
+      ;;
+  esac
+done
+shift "$(($OPTIND -1))"
+
+# If we didn't get a -c option,
+# pick a config file that matches the arguments.
+# This is the normal way to run this,
+# so that any benchmark we want to repeat will have an .xml file.
+# The -c option is for debugging problems by running short workflows.
+if [ -z "$config" ]; then
+  needs_createdb=true
+
+  procedures="${1:-}"
+  case "$procedures" in
+    selects)
+      ;;
+    triggers)
+      # okay
+      ;;
+    *)
+      usage
+      ;;
+  esac
+
+  texture="${2:-}"
+  case "$texture" in
+    valid)
+      # okay
+      ;;
+    invalid)
+      # okay
+      ;;
+    mixed)
+      #okay
+      ;;
+    *)
+      usage
+      ;;
+  esac
+
+  impl="${3:-}"
+  case "$impl" in
+    range_agg)
+      ;;
+    lag)
+      ;;
+    exists)
+      ;;
+    all)
+      # Run just all three RI SQL queries at once, without actually doing inserts and updates
+      ;;
+    *)
+      usage
+      ;;
+  esac
+
+  if [ -z "$config" ]; then
+    config="run_${impl}_${texture}_${procedures}.xml"
+  fi
+fi
+
+# create a benchmark database
+use_impl "${impl:-range_agg}"
+if [ "$needs_createdb" = true ]; then
+  dropdb --force --if-exists -p $port benchbase
+  createdb -p $port -T benchbase_template benchbase
+  psql --no-psqlrc -p $port -c "vacuum analyze" benchbase
+fi
+cd ~/src/benchbase
+./mvnw compile exec:java -P postgres -Dexec.args="-b temporal -c $HOME/src/fk-bench/$config --create=false --load=false --execute=true --monitor-type=advanced --interval-monitor=1000"
+# TODO: copy results somewhere safe, maybe ask for a note about them. Even commit them.

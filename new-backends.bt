@@ -1,0 +1,9 @@
+BEGIN {
+  printf("%-10s %-5s %s\n", "TIME(ms)", "PID", "ARGS");
+}
+// t:syscalls:sys_enter_exec* /comm == "postgres"/ {
+t:syscalls:sys_enter_exec* / !strncmp(comm, "postgres", 8) / {
+  printf("%-10u %-5d\n", elapsed / 1e6, pid);
+  join(args->argv);
+}
+interval:s:60 { exit(); }

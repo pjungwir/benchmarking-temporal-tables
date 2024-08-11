@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<parameters>
+
+    <!-- Connection details -->
+    <type>POSTGRES</type>
+    <driver>org.postgresql.Driver</driver>
+    <!--
+        1. CREATE DATABASE benchbase_template;
+        2. run the benchmark with create=true load=true execute=false
+           Now we have 1,000,000 employees and 6,000,000 positions.
+        3. DROP DATABASE benchbase; (if exists)
+        4. CREATE DATABASE benchbase TEMPLATE benchbase_template
+        5. \c benchbase
+        6. vacuum analyze;
+    <url>jdbc:postgresql://localhost:5432/benchbase_template?sslmode=disable&amp;ApplicationName=postgres&amp;reWriteBatchedInserts=true</url>
+    -->
+    <url>jdbc:postgresql://localhost:5461/benchbase_template?sslmode=disable&amp;ApplicationName=benchbase&amp;reWriteBatchedInserts=true</url>
+    <username>paul</username>
+    <password></password>
+    <reconnectOnConnectionFailure>true</reconnectOnConnectionFailure>
+    <isolation>TRANSACTION_READ_COMMITTED</isolation>
+    <batchsize>128</batchsize>
+
+    <!-- Scalefactor in Temporal scales by *1000 the number of employees-->
+    <scalefactor>10000</scalefactor>
+
+
+    <base_ip>10.1.</base_ip>
+
+    <!-- The workload -->
+    <terminals>1</terminals>
+    <works>
+    </works>
+
+    <!-- Temporal Procedures declaration -->
+    <transactiontypes>
+    </transactiontypes>
+</parameters>

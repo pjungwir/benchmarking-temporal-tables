@@ -1,0 +1,32 @@
+#!/bin/bash
+# wipe - stop a cluster, delete it all, init it, copy the postgresql.conf, start it again.
+
+set -eu
+
+benchdir="$HOME/src/fk-bench"
+. $benchdir/lib.sh
+
+function usage() {
+  echo "USAGE: wipe {range_agg|lag|exists}"
+  exit 1
+}
+
+impl="${1:-}"
+use_impl "$impl" || usage
+
+# stop postgres
+pg_ctl -D "$datadir" -l "$log" stop || true
+
+# initdb
+rm -rf "$datadir"
+initdb -D "$datadir"
+rm "$datadir/postgresql.conf"
+ln -s "$benchdir/postgresql-$impl.conf" "$datadir/postgresql.conf"
+
+# start postgres
+pg_ctl -D "$datadir" -l "$log" start
+
+# Create a benchmark database template.
+# We will load into here and then run benchmarks on copies.
+createdb -p $port benchbase_template
+psql --no-psqlrc -p $port -c "create extension pg_stat_statements" benchbase_template

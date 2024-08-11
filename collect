@@ -1,0 +1,5 @@
+#!/bin/bash
+# collect - collect metrics from the system under test
+
+# dstat is broken for CSV files, but pcp dstat mimics it:
+pcp dstat -tcdr --output results/metrics-$(date "+%Y%m%d-%H:%M:%S").csv

@@ -1,0 +1,16 @@
+// Count how many exec nodes per query were required,
+// and print a histogram of how often each count happens.
+// Run this for each FK implementation separately.
+// My hypothesis is that the EXISTS implementation calls ExecProcNode far fewer times,
+// but only if the FK is invalid.
+
+u:/home/paul/local/bench-*/bin/postgres:standard_ExecutorStart {
+  @nodes[tid] = 0
+}
+u:/home/paul/local/bench-*/bin/postgres:ExecProcNode {
+  @nodes[tid] += 1
+}
+u:/home/paul/local/bench-*/bin/postgres:standard_ExecutorEnd {
+  @calls = hist(@nodes[tid]);
+  delete(@nodes[tid]);
+}

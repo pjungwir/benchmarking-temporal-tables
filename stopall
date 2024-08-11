@@ -1,0 +1,12 @@
+#!/bin/bash
+# stopall - stop all the clusters. Run this before starting a benchmark.
+
+set -eu
+
+benchdir="$HOME/src/fk-bench"
+. $benchdir/lib.sh
+
+for impl in range_agg lag exists; do
+  use_impl $impl
+  pg_ctl -D "$datadir" -l "$log" stop || true
+done
