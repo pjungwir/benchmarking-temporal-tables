@@ -1243,4 +1243,95 @@ Results are saved to: `/home/paul/src/benchbase/results/temporal_2024-08-11_14-5
 Let's try orchestrating everything with our `run` script: running bpftrace, shutting it down afterward, and copying all the reuslts.
 But bpftrace requires sudo. And even if I do `sudo ls` first, I won't be able to send it an -INT signal from my non-root script.
 It also should work if I give myself the CAP_BPF capability, right?
+Okay, got it working:
 
+```
+Completed Transactions:
+com.oltpbenchmark.benchmarks.temporal.procedures.InsertPosition/01               [315406] ******************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdatePosition/02               [317025] ******************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdateEmployee/03               [321236] ********************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.DeleteEmployee/04               [180650] ********************************************
+
+Aborted Transactions:
+<EMPTY>
+
+Rejected Transactions (Server Retry):
+<EMPTY>
+
+Rejected Transactions (Retry Different):
+<EMPTY>
+
+Unexpected SQL Errors:
+com.oltpbenchmark.benchmarks.temporal.procedures.InsertPosition/01               [5873] ********************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdatePosition/02               [4711] ****************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.DeleteEmployee/04               [2434] *********************************
+```
+
+with this trace:
+
+```
+Attaching 9 probes...
+
+
+@calls: 
+[0]               886563 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[1]               363020 |@@@@@@@@@@@@@@@@@@@@@                               |
+[2, 4)             67436 |@@@                                                 |
+[4, 8)              1998 |                                                    |
+[8, 16)           592895 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                  |
+[16, 32)          317443 |@@@@@@@@@@@@@@@@@@                                  |
+[32, 64)               2 |                                                    |
+[64, 128)              2 |                                                    |
+[128, 256)             2 |                                                    |
+[256, 512)             5 |                                                    |
+```
+
+Saved everything to `/home/paul/src/fk-bench/results/temporal_2024-08-11_21-53-41*`
+
+# 1% invalid exists
+
+Run:
+
+```
+Completed Transactions:
+com.oltpbenchmark.benchmarks.temporal.procedures.InsertPosition/01               [315008] ******************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdatePosition/02               [316535] ******************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdateEmployee/03               [321483] ********************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.DeleteEmployee/04               [181763] *********************************************
+
+Aborted Transactions:
+<EMPTY>
+
+Rejected Transactions (Server Retry):
+<EMPTY>
+
+Rejected Transactions (Retry Different):
+<EMPTY>
+
+Unexpected SQL Errors:
+com.oltpbenchmark.benchmarks.temporal.procedures.InsertPosition/01               [5835] ********************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.UpdatePosition/02               [4702] ****************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.DeleteEmployee/04               [2546] **********************************
+```
+
+with this trace:
+
+```
+paul@tal:~/src/talks/pdxpug2024-benchmarking-temporal-foreign-keys-with-benchbase$ cat tmp/trace.txt 
+Attaching 9 probes...
+
+
+@calls: 
+[0]               887299 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[1]               363962 |@@@@@@@@@@@@@@@@@@@@@                               |
+[2, 4)             77949 |@@@@                                                |
+[4, 8)            585031 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                  |
+[8, 16)           317601 |@@@@@@@@@@@@@@@@@@                                  |
+[16, 32)               1 |                                                    |
+[32, 64)               2 |                                                    |
+[64, 128)              2 |                                                    |
+[128, 256)             2 |                                                    |
+[256, 512)             5 |                                                    |
+```
+
+Saved everything to `/home/paul/src/fk-bench/results/temporal_2024-08-11_22-47-11*`

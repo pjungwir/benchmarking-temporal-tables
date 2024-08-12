@@ -55,6 +55,15 @@ case "$config" in
     ;;
 esac
 
+password=""
+if [ ! -z "$trace_command" ]; then
+  # Collect the password so we can use it again below:
+  # Do this right away, before we run createdb, because that takes a while.
+  echo -n "Sudo password: "
+  read -s password
+  echo
+fi
+
 # create a benchmark database
 if [ "$needs_createdb" = true ]; then
   if [ -z "$impl" ]; then
@@ -72,15 +81,16 @@ fi
 # If you want more than one, just wrap them all in a script. (Does bash getopts support giving the same option many times?)
 trace_result=""
 if [ ! -z "$trace_command" ]; then
-  sudo ls >/dev/null  # prompt for a password if necessary
   mkdir -p tmp
-  trace_result="$benchdir/tmp/trace.txt"
+  trace_result="$benchdir/tmp/$(date +"%Y%m%d_%H:%M:%S")-trace.txt"
   # It's too bad we need full sudo here.
   # This should be enough (either here or before you run run):
   # sudo capsh --caps="cap_bpf+eip cap_setpcap,cap_setuid,cap_setgid+ep" --keep=1 --user=paul --addamb=cap_bpf -- -c 'bpftrace exec-nodes.bt'
   # (adapted from https://unix.stackexchange.com/a/303738/25948)
   # But bpftrace seems to have an internal check for uid 0 and refuses to run.
-  sudo $trace_command > "$trace_result" 2>&1 &
+  # Also we need --background or the whole terminal gets messed up.
+  # See https://askubuntu.com/questions/1459049/bash-script-launching-background-process-breaks-terminal-output-and-kills-backgr
+  printf "%s\n" "$password" | sudo --background --non-interactive --stdin $trace_command > "$trace_result"
 fi
 
 cd ~/src/benchbase
@@ -92,10 +102,25 @@ cp "${result_filename%%config.xml}"* $benchdir/results/
 
 if [ ! -z "$trace_result" ]; then
   # Send a ^C to child processes:
-  echo Killing children...
-  # setsid: because sudo won't forward signals within its own process group:
-  # https://stackoverflow.com/questions/48029094/sudo-ignores-sigterm-sent-from-same-script
-  setsid sudo pkill -INT -P $$
-  wait
+  echo "Killing children (τί μέλλομεν τὰ δεινὰ κἀναγκαῖα μὴ πράσσειν κακά;)"
+  # It would be a lot safer to scope this to just our own children,
+  # but I'm not sure that's possible after `sudo --background` above,
+  # which sets the parent pid of sudo itself to 1.
+  # In our retracing search after our missing children, we find only another orphan.
+  #
+  # We need ^ in the pattern because if we SIGINT sudo itself,
+  # it will terminate its children before bpftrace has a chance to write out its histogram.
+  printf "%s\n" "$password" | sudo --non-interactive --stdin pkill -INT -f "^$trace_command"
+
+  # Copy the histogram.
+  # 
+  # If we copy too early we wind up with no histogram,
+  # so this has to happen after bpftrace has exited.
+  #
+  # Calling `wait` here does nothing now that we're using `sudo -b` above.
+  # I guess we should use pgrep to get the pids, kill them, and loop until they disappear. :-(
+  # For now we could just take a little nap.
+  sleep 5
   cp $trace_result "${benchdir}/results/${result_base}-trace.txt"
 fi
+echo "Saved everything to ${benchdir}/results/${result_base}*"

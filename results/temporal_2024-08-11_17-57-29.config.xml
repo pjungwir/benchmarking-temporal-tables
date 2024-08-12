@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<configuration>
+  <reconnectOnConnectionFailure>true</reconnectOnConnectionFailure>
+  <isolation>TRANSACTION_READ_COMMITTED</isolation>
+  <batchsize>128</batchsize>
+  <scalefactor>10000</scalefactor>
+  <base_ip>10.1.</base_ip>
+  <terminals>10</terminals>
+  <works>
+    <work>
+      <time>600</time>
+      <rate>10000</rate>
+      <weights>28,28,28,16</weights>
+    </work>
+  </works>
+  <transactiontypes>
+    <transactiontype>
+      <name>InsertPosition</name>
+    </transactiontype>
+    <transactiontype>
+      <name>UpdatePosition</name>
+    </transactiontype>
+    <transactiontype>
+      <name>UpdateEmployee</name>
+    </transactiontype>
+    <transactiontype>
+      <name>DeleteEmployee</name>
+    </transactiontype>
+  </transactiontypes>
+</configuration>
