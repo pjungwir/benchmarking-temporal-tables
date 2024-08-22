@@ -1,0 +1,26 @@
+{
+ "Start timestamp (milliseconds)": 1722222636414,
+ "Current Timestamp (milliseconds)": 1722222641516,
+ "Elapsed Time (nanoseconds)": 5000088708,
+ "DBMS Type": "POSTGRES",
+ "DBMS Version": "PostgreSQL 18devel on aarch64-apple-darwin23.2.0, compiled by Apple clang version 15.0.0 (clang-1500.1.0.2.5), 64-bit",
+ "Benchmark Type": "temporal",
+ "Final State": "EXIT",
+ "Measured Requests": 6655,
+ "isolation": "TRANSACTION_READ_COMMITTED",
+ "scalefactor": "10",
+ "terminals": "1",
+ "Latency Distribution": {
+  "95th Percentile Latency (microseconds)": 1419,
+  "Maximum Latency (microseconds)": 29407,
+  "Median Latency (microseconds)": 599,
+  "Minimum Latency (microseconds)": 383,
+  "25th Percentile Latency (microseconds)": 573,
+  "90th Percentile Latency (microseconds)": 1373,
+  "99th Percentile Latency (microseconds)": 1562,
+  "75th Percentile Latency (microseconds)": 717,
+  "Average Latency (microseconds)": 748
+ },
+ "Throughput (requests/second)": 1330.9763863493438,
+ "Goodput (requests/second)": 1331.176382801087
+}
