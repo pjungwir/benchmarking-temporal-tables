@@ -1288,7 +1288,7 @@ Attaching 9 probes...
 
 Saved everything to `/home/paul/src/fk-bench/results/temporal_2024-08-11_21-53-41*`
 
-# 1% invalid exists
+## 1% invalid exists
 
 Run:
 
@@ -1335,3 +1335,256 @@ Attaching 9 probes...
 ```
 
 Saved everything to `/home/paul/src/fk-bench/results/temporal_2024-08-11_22-47-11*`
+
+# 2024-08-21
+
+## 50% invalid range_agg
+
+```
+Completed Transactions:
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyRangeAgg/01      [170801] ********************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyLag/02           [     0] 
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyExists/03        [     0] 
+
+Aborted Transactions:
+<EMPTY>
+
+Rejected Transactions (Server Retry):
+<EMPTY>
+
+Rejected Transactions (Retry Different):
+<EMPTY>
+
+Unexpected SQL Errors:
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyRangeAgg/01      [204510] ********************************************************************************
+
+Unknown Status Transactions:
+<EMPTY>
+```
+
+with this trace:
+
+```
+@calls: 
+[0]                    6 |                                                    |
+[1]                    0 |                                                    |
+[2, 4)            159655 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@              |
+[4, 8)            215467 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[8, 16)              194 |                                                    |
+[16, 32)               1 |                                                    |
+[32, 64)               2 |                                                    |
+[64, 128)              2 |                                                    |
+[128, 256)             2 |                                                    |
+[256, 512)             5 |                                                    |
+```
+
+
+## 50% invalid lag
+
+```
+Completed Transactions:
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyRangeAgg/01      [     0] 
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyLag/02           [166566] ********************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyExists/03        [     0] 
+
+Aborted Transactions:
+<EMPTY>
+
+Rejected Transactions (Server Retry):
+<EMPTY>
+
+Rejected Transactions (Retry Different):
+<EMPTY>
+
+Unexpected SQL Errors:
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyLag/02           [199108] ********************************************************************************
+
+Unknown Status Transactions:
+<EMPTY>
+```
+
+with this trace:
+
+```
+@calls: 
+[0]                    6 |                                                    |
+[1]                    0 |                                                    |
+[2, 4)                 0 |                                                    |
+[4, 8)            155810 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@              |
+[8, 16)           209650 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[16, 32)             220 |                                                    |
+[32, 64)               2 |                                                    |
+[64, 128)              2 |                                                    |
+[128, 256)             2 |                                                    |
+[256, 512)             5 |                                                    |
+```
+
+So this has the most node execs.
+
+## 50% invalid exists
+
+```
+Completed Transactions:
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyExists/01        [183664] ********************************************************************************
+
+Aborted Transactions:
+<EMPTY>
+
+Rejected Transactions (Server Retry):
+<EMPTY>
+
+Rejected Transactions (Retry Different):
+<EMPTY>
+
+Unexpected SQL Errors:
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyExists/01        [218294] ********************************************************************************
+
+Unknown Status Transactions:
+<EMPTY>
+```
+
+with this trace:
+
+```
+@calls: 
+[0]                    6 |                                                    |
+[1]                    0 |                                                    |
+[2, 4)            218294 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[4, 8)            183438 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@         |
+[8, 16)              231 |                                                    |
+[16, 32)               1 |                                                    |
+[32, 64)               2 |                                                    |
+[64, 128)              2 |                                                    |
+[128, 256)             2 |                                                    |
+[256, 512)             5 |                                                    |
+```
+
+This is indeed a little better than `range_agg`.
+
+# valid again
+
+## valid range_agg
+
+```
+Completed Transactions:
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyRangeAgg/01      [289256] ********************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyLag/02           [     0] 
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyExists/03        [     0] 
+
+Aborted Transactions:
+<EMPTY>
+
+Rejected Transactions (Server Retry):
+<EMPTY>
+
+Rejected Transactions (Retry Different):
+<EMPTY>
+
+Unexpected SQL Errors:
+<EMPTY>
+
+Unknown Status Transactions:
+<EMPTY>
+```
+
+with trace:
+
+```
+@calls: 
+[0]                    6 |                                                    |
+[1]                    0 |                                                    |
+[2, 4)                 0 |                                                    |
+[4, 8)            289260 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[8, 16)                1 |                                                    |
+[16, 32)               1 |                                                    |
+[32, 64)               2 |                                                    |
+[64, 128)              2 |                                                    |
+[128, 256)             2 |                                                    |
+[256, 512)             5 |                                                    |
+```
+
+## valid lag
+
+```
+Completed Transactions:
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyRangeAgg/01      [     0] 
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyLag/02           [285413] ********************************************************************************
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyExists/03        [     0] 
+
+Aborted Transactions:
+<EMPTY>
+
+Rejected Transactions (Server Retry):
+<EMPTY>
+
+Rejected Transactions (Retry Different):
+<EMPTY>
+
+Unexpected SQL Errors:
+<EMPTY>
+
+Unknown Status Transactions:
+<EMPTY>
+```
+
+with trace:
+
+```
+@calls: 
+[0]                    6 |                                                    |
+[1]                    0 |                                                    |
+[2, 4)                 0 |                                                    |
+[4, 8)                 4 |                                                    |
+[8, 16)           285414 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[16, 32)               1 |                                                    |
+[32, 64)               2 |                                                    |
+[64, 128)              2 |                                                    |
+[128, 256)             2 |                                                    |
+[256, 512)             5 |                                                    |
+```
+
+## valid exists
+
+Huh they all succeeded?:
+
+```
+Completed Transactions:
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyRangeAgg/01      [     0] 
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyLag/02           [     0] 
+com.oltpbenchmark.benchmarks.temporal.procedures.CheckForeignKeyExists/03        [228847] ********************************************************************************
+
+Aborted Transactions:
+<EMPTY>
+
+Rejected Transactions (Server Retry):
+<EMPTY>
+
+Rejected Transactions (Retry Different):
+<EMPTY>
+
+Unexpected SQL Errors:
+<EMPTY>
+
+Unknown Status Transactions:
+<EMPTY>
+```
+
+with trace:
+
+```
+
+@calls: 
+[0]                    6 |                                                    |
+[1]                    0 |                                                    |
+[2, 4)                 0 |                                                    |
+[4, 8)            228851 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[8, 16)                1 |                                                    |
+[16, 32)               1 |                                                    |
+[32, 64)               2 |                                                    |
+[64, 128)              2 |                                                    |
+[128, 256)             2 |                                                    |
+[256, 512)             5 |                                                    |
+```
+
+Still very low operations.
+

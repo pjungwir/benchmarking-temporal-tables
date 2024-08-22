@@ -42,7 +42,7 @@ def try2():
 
 def try3():
     fig = plt.figure()
-    plt.title(f'{results} median latency (milliseconds)')
+    plt.title(f'median latency (milliseconds)')
     plt.plot(results_range_agg['Median Latency (millisecond)'], label='range_agg')
     plt.plot(results_lag['Median Latency (millisecond)'], label='lag')
     plt.plot(results_exists['Median Latency (millisecond)'], label='exists')
@@ -53,7 +53,7 @@ def try3():
 
 def try4():
     fig = plt.figure()
-    plt.title(f'{results} mean latency (milliseconds)')
+    plt.title(f'mean latency (milliseconds)')
     plt.plot(results_range_agg['Average Latency (millisecond)'], label='range_agg')
     plt.plot(results_lag['Average Latency (millisecond)'], label='lag')
     plt.plot(results_exists['Average Latency (millisecond)'], label='exists')
@@ -64,7 +64,7 @@ def try4():
 
 def try5():
     fig = plt.figure()
-    plt.title(f'{results} 95th% latency (milliseconds)')
+    plt.title(f'95th% latency (milliseconds)')
     plt.plot(results_range_agg['95th Percentile Latency (millisecond)'], label='range_agg')
     plt.plot(results_lag['95th Percentile Latency (millisecond)'], label='lag')
     plt.plot(results_exists['95th Percentile Latency (millisecond)'], label='exists')
