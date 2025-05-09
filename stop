@@ -1,0 +1,18 @@
+#!/bin/bash
+# stop - stop a cluster.
+
+set -eu
+
+benchdir="$HOME/src/fk-bench"
+. $benchdir/lib.sh
+
+function usage() {
+  echo "USAGE: stop {range_agg|lag|exists}"
+  exit 1
+}
+
+impl="${1:-}"
+use_impl "$impl" || usage
+
+# stop postgres
+pg_ctl -D "$datadir" -l "$log" stop || true
