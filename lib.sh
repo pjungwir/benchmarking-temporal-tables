@@ -13,7 +13,7 @@ function use_impl() {
   root="$HOME/local/bench-$impl"
   datadir="$root/pgdata"
   log="${HOME}/local/var/log/postgresql-$impl.log"
-  port=$(grep 'port =' "$datadir/postgresql.conf" | awk '{ print $3 }')
+  port=$(grep 'port =' "postgresql-${impl}.conf" | awk '{ print $3 }')
 
   export PATH="$root/bin:$PATH"
 }
