@@ -1,3 +1,27 @@
+# USAGE
+
+The database lives in `~/local/pgsql-range_agg` and listens on 5460.
+There are other directories too if you want to run multiple implementations in different clusters.
+
+To get started, do this:
+
+```
+git co valid-time-v51
+./configure --prefix=${HOME}/local/bench-range_agg CFLAGS='-O2 -pipe' && make clean && make -j world && make install-world
+./wipe range_agg
+./run -l range_agg_load_config.xml # Take a while but sets up the benchbase_template database
+./run -c range_agg_load_config.xml
+./run -C range_agg_impl_comparison.xml
+```
+
+or
+
+```
+./wipe range_agg
+./run -l range_agg_load_config_big.xml # Take a while but sets up the benchbase_template database
+./run -c range_agg_load_config_big.xml
+./run -C range_agg_impl_comparison_big.xml
+```
 
 
 
