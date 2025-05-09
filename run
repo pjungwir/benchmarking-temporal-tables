@@ -8,19 +8,38 @@ benchdir="$HOME/src/fk-bench"
 
 function usage() {
   echo "USAGE: run [options] <config_file>"
+  echo "  -l             Load db, don't run the benchmark"
+  echo "  -c             Only run createdb (and no benchmark)"
   echo "  -C             Don't run createdb"
+  echo "  -M             Don't use --monitor-type=advanced"
   echo "  -t <filename>  Trace with <filename> and ^C it when we're done"
 
   exit 1
 }
 
 needs_createdb=true
+only_createdb=false
+needs_create=false
+needs_load=false
+needs_execute=true
+monitor_type="--monitor-type=advanced --interval-monitor=1000"
 trace_command=""
 
-while getopts 'Ct:' opt; do
+while getopts 'lcCMt:' opt; do
   case "$opt" in
+    "l")
+      needs_create=true
+      needs_load=true
+      needs_execute=false
+      ;;
+    "c")
+      only_createdb=true
+      ;;
     "C")
       needs_createdb=false
+      ;;
+    "M")
+      monitor_type=""
       ;;
     "t")
       trace_command="${OPTARG}"
@@ -74,6 +93,11 @@ if [ "$needs_createdb" = true ]; then
   dropdb --force --if-exists -p $port benchbase
   createdb -p $port -T benchbase_template benchbase
   psql --no-psqlrc -p $port -c "vacuum analyze" benchbase
+
+  if [ "$only_createdb" = true ]; then
+    echo "Skipping benchmark"
+    exit 0
+  fi
 fi
 
 # Run a trace in the background and ^C it later.
@@ -92,9 +116,8 @@ if [ ! -z "$trace_command" ]; then
   # See https://askubuntu.com/questions/1459049/bash-script-launching-background-process-breaks-terminal-output-and-kills-backgr
   printf "%s\n" "$password" | sudo --background --non-interactive --stdin $trace_command > "$trace_result"
 fi
-
 cd ~/src/benchbase
-./mvnw compile exec:java -P postgres -Dexec.args="-b temporal -c $benchdir/$config --create=false --load=false --execute=true --monitor-type=advanced --interval-monitor=1000"
+./mvnw compile exec:java -P postgres -Dexec.args="-b temporal -c $benchdir/$config --create=${needs_create} --load=${needs_load} --execute=${needs_execute} ${monitor_type}"
 # Copy the results somewhere safe:
 result_filename="$(ls -t ~/src/benchbase/results/*.config.xml | head -1)"
 result_base="$(basename $result_filename .config.xml)"
