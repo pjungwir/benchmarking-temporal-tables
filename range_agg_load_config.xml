@@ -22,10 +22,7 @@
     <batchsize>128</batchsize>
 
     <!-- Scalefactor in Temporal scales by *1000 the number of employees-->
-    <scalefactor>10000</scalefactor>
-
-
-    <base_ip>10.1.</base_ip>
+    <scalefactor>100</scalefactor>
 
     <!-- The workload -->
     <terminals>1</terminals>
